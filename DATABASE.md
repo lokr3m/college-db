@@ -1,5 +1,20 @@
 # College Database - Technical Documentation
 
+## Terminology / Terminoloogia
+
+This document uses the following terminology consistently:
+
+| English Term | Estonian Term | Database Table | Notes |
+|--------------|---------------|----------------|-------|
+| Department | Osakond/Kolledž | `departments` | College/school organizational unit |
+| Instructor | Õpetaja/Õppejõud | `instructors` | Teacher/faculty member |
+| Department Head | Osakonnajuhataja | `department_heads` | Department leader/manager |
+| Course | Kursus/Õppeaine | `courses` | Subject/class offering |
+| Student | Õpilane | `students` | Enrolled learner |
+| Enrollment | Registreerimine | `enrollments` | Student-course registration with grade |
+
+**Note**: The terms "College" and "Department" are used interchangeably in requirements, but in database implementation we use "Department" consistently for the organizational unit (table: `departments`).
+
 ## Database Schema Overview
 
 This document provides detailed technical documentation for the College Database Management System.
@@ -68,6 +83,12 @@ Students (N) ←→ (N) Courses (through Enrollments)
 
 **Purpose**: Define department leadership (one-to-one relationship)
 
+**IMPORTANT - NO HISTORICAL TRACKING**: This table stores ONLY the current department head. When leadership changes, you must either:
+1. Update the existing record (change instructor_id and start_date), OR  
+2. Delete the old record and insert a new one
+
+If you need to track historical department heads (who was head before, when they served, etc.), this table structure would need to be modified to include an `end_date` field and remove the primary key constraint on `department_id`.
+
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | department_id | BIGINT UNSIGNED | PRIMARY KEY, FOREIGN KEY | Department identifier |
@@ -85,9 +106,10 @@ Students (N) ←→ (N) Courses (through Enrollments)
 - instructor_id → instructors(instructor_id) ON DELETE CASCADE
 
 **Business Rules**:
-- One department can have at most one head at a time
-- One instructor can head only one department
-- No historical records - only current head is stored
+- One department can have at most one head at a time (enforced by PRIMARY KEY on department_id)
+- One instructor can head only one department (enforced by UNIQUE constraint on instructor_id)
+- A department can exist without a head (this is an optional relationship)
+- When a department or instructor is deleted, the head record is automatically removed (CASCADE delete)
 
 ### 4. Courses Table
 
@@ -96,17 +118,23 @@ Students (N) ←→ (N) Courses (through Enrollments)
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | course_id | BIGINT UNSIGNED | PRIMARY KEY, AUTO_INCREMENT | Unique course identifier |
-| course_code | VARCHAR(20) | NOT NULL, UNIQUE | Course code (e.g., CS101) |
-| course_name | VARCHAR(100) | NOT NULL | Course name |
+| course_code | VARCHAR(20) | NOT NULL, UNIQUE | Course code (e.g., CS101, MATH200) |
+| course_name | VARCHAR(100) | NOT NULL | Full course name (e.g., "Introduction to Programming") |
 | department_id | BIGINT UNSIGNED | NOT NULL, FOREIGN KEY | Offering department |
 | instructor_id | BIGINT UNSIGNED | NULL, FOREIGN KEY | Teaching instructor |
-| credits | INT | NOT NULL, DEFAULT 3 | Credit points |
-| semester | VARCHAR(20) | NULL | Semester (e.g., "Autumn 2024") |
-| year | INT | NULL | Academic year |
-| room_number | VARCHAR(20) | NULL | Room location |
-| schedule | VARCHAR(100) | NULL | Class schedule |
+| credits | INT | NOT NULL, DEFAULT 3 | Credit points (typically 1-6) |
+| semester | VARCHAR(20) | NULL | Semester name (e.g., "Autumn 2024", "Spring 2025", "Fall 2024") - flexible text format |
+| year | INT | NULL | Academic year (e.g., 2024, 2025) - used with semester for scheduling |
+| room_number | VARCHAR(20) | NULL | Physical classroom location (e.g., "A-101", "B-404", "Lab 3", "Online") |
+| schedule | VARCHAR(100) | NULL | Weekly class times (e.g., "Mon/Wed 10:00-11:30", "Tue/Thu 14:00-16:00") - free text |
 | created_at | TIMESTAMP | NULL | Record creation timestamp |
 | updated_at | TIMESTAMP | NULL | Record update timestamp |
+
+**Field Details**:
+- **semester**: Free-text field to accommodate different semester naming conventions (Autumn/Spring, Fall/Winter, etc.)
+- **year**: Academic year when the course runs, used together with semester
+- **room_number**: Where the course physically meets (building-room format or "Online" for remote courses)
+- **schedule**: Weekly meeting pattern in free-text format for flexibility
 
 **Relationships**:
 - Belongs to one Department
@@ -276,10 +304,47 @@ The schema includes indexes on:
 
 ## Security Considerations
 
+### Data Integrity
 1. **Email Uniqueness**: Prevents duplicate accounts
 2. **Cascade Deletes**: Automatically cleans up related records
 3. **Foreign Key Constraints**: Maintains data integrity
 4. **NULL Handling**: Allows for flexible data entry while maintaining required fields
+
+### Database User Permissions
+
+**IMPORTANT SECURITY NOTE**: The PHP application user should have LIMITED database privileges.
+
+**Recommended Permissions** (for production environment):
+```sql
+-- Create a dedicated database user for the application
+CREATE USER 'college_app'@'localhost' IDENTIFIED BY 'secure_password';
+
+-- Grant only necessary privileges (NO DROP TABLE rights)
+GRANT SELECT, INSERT, UPDATE, DELETE ON college_db.* TO 'college_app'@'localhost';
+
+-- DO NOT grant these privileges to application user:
+-- DROP, CREATE, ALTER, INDEX, GRANT OPTION
+```
+
+**WHY**: 
+- Application user should NOT be able to drop tables or alter schema
+- Schema changes should only be done through migrations by administrators
+- This prevents accidental or malicious destruction of database structure
+- Limits damage from SQL injection attacks
+
+**DO NOT USE** in production:
+```php
+// ❌ NEVER do this in production code:
+define('DB_USER', 'root'); 
+```
+
+**Example .env configuration** (production):
+```env
+DB_USERNAME=college_app  # Limited privilege user
+DB_PASSWORD=secure_random_password_here
+```
+
+**For development only**, you may use root or a user with full privileges, but ensure this is NEVER deployed to production.
 
 ## Migration Order
 
